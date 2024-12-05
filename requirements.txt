@@ -20,4 +20,3 @@ timezonefinder
 pytz
 datetime
 google.generativeai
-db-sqlite3 0.0.1
