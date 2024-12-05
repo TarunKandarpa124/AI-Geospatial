@@ -13,3 +13,12 @@ numpy
 jinja2
 Werkzeug==2.2.2
 geopy
+openrouteservice
+overpy
+regex
+timezonefinder
+pytz
+datetime
+google.generativeai
+secrets
+sqlite3
