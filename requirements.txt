@@ -22,4 +22,4 @@ datetime
 google.generativeai
 secrets
 sqlite3
-pyopenssl
+pyOpenSSL
