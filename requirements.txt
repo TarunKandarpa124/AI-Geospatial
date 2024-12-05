@@ -1,0 +1,13 @@
+Flask==2.2.3
+gunicorn==20.1.0
+SQLAlchemy==1.4.44
+Flask-Cors==3.0.10
+requests>=2.32.2
+tensorflow
+matplotlib
+scikit-learn
+fsspec
+openpyxl
+pandas
+numpy
+jinja2

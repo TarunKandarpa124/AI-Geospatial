@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>GeoQuery App</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.css" />
+    <style>
+        body,
+        html {
+            height: 100%;
+            margin: 0;
+            font-family: Roboto, sans-serif;
+        }
+
+        #map {
+            height: 100%;
+            width: 100%;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+
+        .chatbox {
+            position: absolute;
+            bottom: 1px;
+            right: 10px;
+            width: 300px;
+            height: 100%;
+            background: rgba(245, 245, 245, 0.7);
+            border-radius: 20px;
+            display: flex;
+            flex-direction: column;
+            z-index: 1000;
+        }
+
+        .chatbox-input {
+            width: 100%;
+            padding: 10px;
+            border: 3px solid rgba(0.2, 0, 0, 0.2);
+            border-top: 1px solid #ccc;
+            box-sizing: border-box;
+            border-radius: 30px;
+        }
+
+        #chat-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        .user-message {
+            background-color: blue;
+            padding: 10px;
+            border-radius: 10px;
+            margin: 5px;
+            text-align: right;
+            display: inline-block;
+            align-self: flex-end;
+            color: white;
+            font-size: 14px;
+        }
+
+        .bot-message {
+            background-color: black;
+            padding: 10px;
+            border-radius: 20px;
+            margin: 5px;
+            text-align: left;
+            display: flex;
+            align-items: flex-start;
+            gap: 10px;
+            color: white;
+            font-size: 14px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="map"></div>
+    <div class="chatbox">
+        <div id="chat-container"></div>
+        <input type="text" id="queryInput" class="chatbox-input" placeholder="Enter your query" onkeydown="handleKeyPress(event)">
+    </div>
+
+    <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+    <script src='https://unpkg.com/@turf/turf@6/turf.min.js'></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet.draw/1.0.4/leaflet.draw.js"></script>
+
+    <script>
+        var map = L.map('map').setView([0, 0], 2);
+        L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: 'ESRI World Imagery'
+        }).addTo(map);
+
+
+        var markersAndPolylines = [];
+
+        // Add Leaflet.draw library for drawing tools
+        var drawnItems = new L.FeatureGroup();
+        map.addLayer(drawnItems);
+
+        var drawControl = new L.Control.Draw({
+            draw: {
+                polygon: {
+                    allowIntersection: false
+                },
+                polyline: false,
+                rectangle: false,
+                circle: false,
+                marker: false,
+                circlemarker: false,
+            },
+            edit: {
+                featureGroup: drawnItems
+            }
+        });
+        map.addControl(drawControl);
+
+        map.on(L.Draw.Event.CREATED, function (e) {
+            var type = e.layerType,
+                layer = e.layer;
+
+            if (type === 'polygon') {
+                var coordinates = layer.getLatLngs()[0].map(function (latlng) {
+                    return [latlng.lng, latlng.lat];
+                });
+
+                var area = turf.area(turf.polygon([coordinates]));
+                var centroid = turf.centroid(turf.polygon([coordinates]));
+
+                var prompt = `Generate a text response describing a polygon with an area of ${area.toFixed(2)} square meters and a centroid at coordinates (${centroid.geometry.coordinates[1].toFixed(6)}, ${centroid.geometry.coordinates[0].toFixed(6)}).`;
+
+                fetch('/api/generate_polygon_response', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ prompt: prompt })
+                })
+                    .then(response => response.json())
+                    .then(data => {
+                        var chatContainer = document.getElementById('chat-container');
+                        var botMessage = document.createElement('div');
+                        botMessage.className = 'bot-message';
+                        botMessage.textContent = data.response;
+                        chatContainer.appendChild(botMessage);
+
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                    });
+
+                if (layer instanceof L.Polygon) {
+                    const latlngs = layer.getLatLngs();
+                    const firstLatLng = latlngs[0][0];
+                    const lastLatLng = latlngs[0][latlngs[0].length - 1];
+
+                    // Check if the first and last points are close enough
+                    if (firstLatLng.distanceTo(lastLatLng) < 10) {  // 10 meters threshold
+                        layer.editor.commitDrawing(); // Stop drawing and close the polygon
+                    }
+                }
+            }
+
+
+            drawnItems.addLayer(layer);
+        });
+
+        var chatHistory = [];
+
+        function displayBotMessage(message) {
+            var chatContainer = document.getElementById('chat-container');
+            var botMessage = document.createElement('div');
+            botMessage.className = 'bot-message';
+            botMessage.textContent = message;
+            chatContainer.appendChild(botMessage);
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        function getUserLocation() {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    function(position) {
+                        var latitude = position.coords.latitude;
+                        var longitude = position.coords.longitude;
+                        sendLocationToBackend(latitude, longitude);
+                    },
+                    function(error) {
+                        alert("Error getting location: " + error.message);
+                    },
+                    {
+                        timeout: 10000,
+                        enableHighAccuracy: true
+                    }
+                );
+            } else {
+                alert("Geolocation is not supported by this browser.");
+            }
+        }
+
+        function sendLocationToBackend(latitude, longitude) {
+            fetch('/api/geoquery', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    query: "user location",
+                    latitude: latitude,
+                    longitude: longitude
+                })
+            })
+            .then(response => response.json())
+            .then(data => {
+                // Display the response in the chatbox
+                displayBotMessage(data.chatbox_response);
+
+                // Handle map_data from the response (if any)
+                if (data.map_data && data.map_data.length > 0) {
+                    data.map_data.forEach(feature => {
+                        if (feature.type === 'marker') {
+                            var userMarker = L.marker([feature.lat, feature.lng]).addTo(map);
+                            userMarker.bindPopup(feature.popupContent).openPopup();
+                            map.setView([feature.lat, feature.lng], 13);
+                        }
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        }
+
+        var markersAndPolylines = [];
+
+        function clearMarkersAndPolylines() {
+            markersAndPolylines.forEach(feature => {
+                map.removeLayer(feature);
+            });
+            markersAndPolylines = []; // Empty the array
+        }
+
+
+
+        function sendQuery() {
+            clearMarkersAndPolylines();
+            var query = document.getElementById('queryInput').value;
+            document.getElementById('queryInput').value = '';
+
+            var chatContainer = document.getElementById('chat-container');
+            var userMessage = document.createElement('div');
+            userMessage.className = 'user-message';
+            userMessage.textContent = query;
+            chatContainer.appendChild(userMessage);
+
+            chatHistory.push({ role: 'user', content: query });
+
+            var userLocationKeywords = ["where am i", "my location", "current location",
+                                  "here", "this place", "nearby", "around me",
+                                  "close to me", "in this area", "around here"];
+
+            if (userLocationKeywords.some(keyword => query.toLowerCase().includes(keyword))) {
+                // Get user's location
+                navigator.geolocation.getCurrentPosition(function(position) {
+                    var latitude = position.coords.latitude;
+                    var longitude = position.coords.longitude;
+
+                    // Send query and location to the backend
+                    fetch('/api/geoquery', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            query: query,
+                            latitude: latitude,
+                            longitude: longitude
+                        })
+                    })
+                    .then(response => response.json())
+                    .then(data => {
+                        var botMessage = document.createElement('div');
+                        botMessage.className = 'bot-message';
+                        botMessage.textContent = data.chatbox_response;
+                        chatContainer.appendChild(botMessage);
+
+                        chatHistory.push({ role: 'bot', content: data.chatbox_response });
+
+                        // Update the map (if needed)
+                        markersAndPolylines.forEach(feature => {
+                            map.removeLayer(feature);
+                        });
+                        markersAndPolylines = [];
+
+                        // Assuming the backend sends map_data for user location as well:
+                        if (data.map_data) {
+                            data.map_data.forEach(feature => {
+                                if (feature.type === 'marker') {
+                                    var marker = L.marker([feature.lat, feature.lng])
+                                        .bindPopup(feature.popupContent)
+                                        .addTo(map);
+                                    markersAndPolylines.push(marker);
+
+                                    var latlng = L.latLng(feature.lat, feature.lng);
+                                    var bounds = latlng.toBounds(500); // Adjust radius as needed
+                                    map.flyToBounds(bounds, { duration: 1 });
+                                }
+                            });
+                        }
+
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    })
+                    .catch(error => {
+                        console.error('Error:', error);
+                    });
+                }, function(error) {
+                    // Handle location errors (e.g., permission denied)
+                    console.error("Error getting location:", error);
+                    var botMessage = document.createElement('div');
+                    botMessage.className = 'bot-message';
+                    botMessage.textContent = "Unable to get your location. Please enable location services.";
+                    chatContainer.appendChild(botMessage);
+                    chatContainer.scrollTop = chatContainer.scrollHeight;
+                }, {
+                    enableHighAccuracy: true,
+                    timeout: 5000,
+                    maximumAge: 0
+                });
+            } else {
+                fetch('/api/geoquery', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ query: query })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.is_user_location_query) {
+                        getUserLocation();
+                    } else {
+                        var botMessage = document.createElement('div');
+                        botMessage.className = 'bot-message';
+                        botMessage.textContent = data.chatbox_response;
+                        chatContainer.appendChild(botMessage);
+
+                        chatHistory.push({ role: 'bot', content: data.chatbox_response });
+
+                        markersAndPolylines.forEach(feature => {
+                            map.removeLayer(feature);
+                        });
+                        markersAndPolylines = [];
+
+                        if (data.map_data) {
+                            let allCoordinates = [];
+                            data.map_data.forEach(feature => {
+                                if (feature.type === 'marker') {
+                                    var marker = L.marker([feature.lat, feature.lng])
+                                        .bindPopup(feature.popupContent)
+                                        .addTo(map);
+                                    markersAndPolylines.push(marker);
+                                    allCoordinates.push([feature.lat, feature.lng]);
+                                } else if (feature.type === 'polyline') {
+                                    var polyline = L.polyline(feature.coordinates).addTo(map);
+                                    markersAndPolylines.push(polyline);
+                                    allCoordinates = allCoordinates.concat(feature.coordinates);
+                                }
+                            });
+
+                            if (data.map_data.length > 0) {
+                                var bounds = L.latLngBounds(allCoordinates);
+                                map.flyToBounds(bounds, { duration: 1.5, padding: [50, 50] });
+                            }
+                        }
+
+                        chatContainer.scrollTop = chatContainer.scrollHeight;
+                    }
+                })
+                .catch(error => {
+                    console.error('Error:', error);
+                });
+            }
+        }
+
+        function handleKeyPress(event) {
+            if (event.key === "Enter") {
+                sendQuery();
+                document.getElementById("queryInput").placeholder = "Enter your query";
+            }
+        }
+
+        map.on('click', function(e) {
+            clearMarkersAndPolylines();
+            var latitude = e.latlng.lat;
+            var longitude = e.latlng.lng;
+
+            fetch('/api/map_click', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ latitude: latitude, longitude: longitude })
+            })
+            .then(response => response.json())
+            .then(data => {
+                displayBotMessage(data.chatbox_response);
+
+                // Handle map_data
+                if (data.map_data && data.map_data.length > 0) {
+                    data.map_data.forEach(feature => {
+                        if (feature.type === 'marker') {
+                            var marker = L.marker([feature.lat, feature.lng]).addTo(map);
+                            marker.bindPopup(feature.popupContent).openPopup();
+                            markersAndPolylines.push(marker); // Add marker to the array
+                        }
+                    });
+                }
+            })
+            .catch(error => {
+                console.error('Error:', error);
+            });
+        });
+
+    </script>
+
+</body>
+
+</html>
