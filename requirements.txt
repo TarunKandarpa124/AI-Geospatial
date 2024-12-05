@@ -20,7 +20,5 @@ timezonefinder
 pytz
 datetime
 google.generativeai
-pyOpenSSL==24.3.0
-secrets
 sqlite3
 
